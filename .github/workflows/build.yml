@@ -1,0 +1,55 @@
+name: Deploy Shiny
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker client
+        run: gcloud auth configure-docker asia-south1-docker.pkg.dev
+
+      - name: get-credentials
+        uses: "google-github-actions/get-gke-credentials@v2"
+        with:
+          cluster_name: "autopilot-cluster-1"
+          location: "asia-south1"
+
+      - name: get-pods
+        run: kubectl get pods
+
+      - name: Test push to Artifact Registry
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          echo "FROM scratch" > Dockerfile.test
+          docker build -t asia-south1-docker.pkg.dev/$GCP_PROJECT_ID/my-shiny-app-repo/test-image:latest -f Dockerfile.test .
+          docker push asia-south1-docker.pkg.dev/$GCP_PROJECT_ID/my-shiny-app-repo/test-image:latest
+          docker rmi asia-south1-docker.pkg.dev/$GCP_PROJECT_ID/my-shiny-app-repo/test-image:latest
+          rm Dockerfile.test
+
+      - name: Build and push Docker image
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          API_KEY: ${{secrets.API_KEY}}
+        run: |
+          docker build --build-arg API_KEY=$API_KEY -t asia-south1-docker.pkg.dev/$GCP_PROJECT_ID/my-shiny-app-repo/my-shiny-app:latest .
+          docker push asia-south1-docker.pkg.dev/$GCP_PROJECT_ID/my-shiny-app-repo/my-shiny-app:latest
+
+      - name: deploy to gke
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          sed -i "s/GCP_PROJECT_ID/$GCP_PROJECT_ID/g" resources.yaml
+          kubectl apply -f resources.yaml
